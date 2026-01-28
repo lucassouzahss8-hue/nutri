@@ -8,7 +8,8 @@ from datetime import datetime
 # Substitua pela sua chave real
 API_KEY = "AIzaSyAO9CysPJuLdaM9Br-lVByTq-6dlgyJXdQ" 
 genai.configure(api_key=API_KEY)
-# Versão estável do modelo para evitar o erro 404
+
+# Usando o modelo estável para evitar o erro 404
 model = genai.GenerativeModel('gemini-1.5-flash') 
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
@@ -26,20 +27,23 @@ def init_db():
                   nome TEXT, idade INTEGER, objetivo TEXT, 
                   clinico TEXT, exames TEXT, data_cadastro TEXT)''')
     
-    # RESOLVE O KEYERROR: Verifica as colunas e as cria se faltarem
+    # RESOLVE O KEYERROR: Verifica as colunas e as cria se faltarem no banco antigo
     cursor = conn.execute('SELECT * FROM pacientes')
     cols = [description[0] for description in cursor.description]
+    
     if 'data_cadastro' not in cols:
         c.execute('ALTER TABLE pacientes ADD COLUMN data_cadastro TEXT')
     if 'clinico' not in cols:
         c.execute('ALTER TABLE pacientes ADD COLUMN clinico TEXT')
     if 'idade' not in cols:
         c.execute('ALTER TABLE pacientes ADD COLUMN idade INTEGER')
+    
+    c.execute('CREATE TABLE IF NOT EXISTS financeiro (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, valor REAL)')
     conn.commit()
 
 init_db()
 
-# --- ESTILO ---
+# --- ESTILIZAÇÃO PARA VISIBILIDADE ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -51,49 +55,57 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- NAVEGAÇÃO ---
+# --- NAVEGAÇÃO LATERAL ---
 st.sidebar.title("🍎 NutriSync Pro")
-menu = st.sidebar.radio("Menu:", ["📊 Dashboard", "📝 Prontuário", "🤖 Gerar Dieta"])
+menu = st.sidebar.radio("Ir para:", ["📊 Dashboard", "📝 Prontuário", "🤖 Gerar Dieta IA"])
 conn = get_connection()
 
+# --- LOGICA DAS SEÇÕES ---
 if menu == "📊 Dashboard":
     st.title("Pacientes Recentes")
     df_p = pd.read_sql_query("SELECT * FROM pacientes", conn)
+    
     if not df_p.empty:
-        # Garantimos que as colunas existem antes de exibir
+        # Exibe apenas colunas que garantidamente existem agora
         st.dataframe(df_p[['nome', 'objetivo', 'data_cadastro']], use_container_width=True)
     else:
         st.info("Nenhum paciente cadastrado.")
 
 elif menu == "📝 Prontuário":
     st.title("Cadastro de Paciente")
-    with st.form("cad"):
-        nome = st.text_input("Nome")
-        idade = st.number_input("Idade", 0)
+    with st.form("cad_form", clear_on_submit=True):
+        nome = st.text_input("Nome Completo")
+        idade = st.number_input("Idade", 0, 120)
         obj = st.selectbox("Objetivo", ["Emagrecimento", "Hipertrofia", "Saúde"])
-        clin = st.text_area("Histórico Clínico")
-        exames = st.text_area("Exames")
-        if st.form_submit_button("Salvar"):
-            dt = datetime.now().strftime("%d/%m/%Y")
-            conn.execute("INSERT INTO pacientes (nome, idade, objetivo, clinico, exames, data_cadastro) VALUES (?,?,?,?,?,?)",
-                         (nome, idade, obj, clin, exames, dt))
-            conn.commit()
-            st.success("Salvo!")
+        clin = st.text_area("Histórico Clínico/Restrições")
+        exames = st.text_area("Resultados de Exames")
+        
+        if st.form_submit_button("Salvar Paciente"):
+            if nome:
+                dt = datetime.now().strftime("%d/%m/%Y")
+                conn.execute("INSERT INTO pacientes (nome, idade, objetivo, clinico, exames, data_cadastro) VALUES (?,?,?,?,?,?)",
+                             (nome, idade, obj, clin, exames, dt))
+                conn.commit()
+                st.success(f"Paciente {nome} salvo com sucesso!")
+            else:
+                st.error("O nome é obrigatório.")
 
-elif menu == "🤖 Gerar Dieta":
+elif menu == "🤖 Gerar Dieta IA":
     st.title("Assistente de IA")
     df_p = pd.read_sql_query("SELECT * FROM pacientes", conn)
+    
     if df_p.empty:
-        st.warning("Cadastre um paciente primeiro.")
+        st.warning("Cadastre um paciente primeiro no prontuário.")
     else:
-        sel = st.selectbox("Paciente", df_p['nome'])
+        sel = st.selectbox("Escolha o Paciente", df_p['nome'])
         p = df_p[df_p['nome'] == sel].iloc[0]
+        
         if st.button("🪄 Gerar Dieta"):
-            # Uso de .get() para evitar erros de chave
-            prompt = f"Crie uma dieta para {p.get('nome')}, objetivo {p.get('objetivo')}, clínico: {p.get('clinico')}."
-            with st.spinner("Gerando..."):
+            prompt = f"Como nutricionista, crie uma dieta para {p.get('nome')}, objetivo: {p.get('objetivo')}, clínico: {p.get('clinico')}."
+            with st.spinner("O Gemini está analisando os dados..."):
                 try:
                     response = model.generate_content(prompt)
+                    st.markdown("### Plano Alimentar Sugerido")
                     st.write(response.text)
                 except Exception as e:
-                    st.error(f"Erro: {e}")
+                    st.error(f"Erro ao gerar dieta: {e}")
