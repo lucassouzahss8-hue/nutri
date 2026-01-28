@@ -5,40 +5,42 @@ import google.generativeai as genai
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA IA ---
-# Substitua pela sua chave real do Google AI Studio
+# Insira sua chave real obtida no Google AI Studio
 API_KEY = "AIzaSyAO9CysPJuLdaM9Br-lVByTq-6dlgyJXdQ" 
 genai.configure(api_key=API_KEY)
-# Usando o Gemini 1.5 Flash para geração rápida
+# Utilizando o Gemini 1.5 Flash para processamento rápido
 model = genai.GenerativeModel('gemini-1.5-flash') 
 
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NutriSync Pro", layout="wide", page_icon="🍎")
 
-# --- BANCO DE DADOS (COM CORREÇÃO DE COLUNAS) ---
+# --- BANCO DE DADOS COM CORREÇÃO AUTOMÁTICA ---
 def get_connection():
     return sqlite3.connect('nutri_data.db', check_same_thread=False)
 
 def init_db():
     conn = get_connection()
     c = conn.cursor()
-    # Criando tabela com todas as colunas necessárias
+    # Cria a tabela base
     c.execute('''CREATE TABLE IF NOT EXISTS pacientes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   nome TEXT, idade INTEGER, objetivo TEXT, 
                   clinico TEXT, exames TEXT, data_cadastro TEXT)''')
     
-    # RESOLVE O KEYERROR: Verifica se a coluna data_cadastro existe, senão cria
-    try:
-        c.execute("SELECT data_cadastro FROM pacientes LIMIT 1")
-    except sqlite3.OperationalError:
-        c.execute("ALTER TABLE pacientes ADD COLUMN data_cadastro TEXT")
+    # RESOLVE O KEYERROR: Adiciona colunas caso o banco de dados seja antigo
+    cursor = conn.execute('SELECT * FROM pacientes')
+    cols = [description[0] for description in cursor.description]
+    if 'data_cadastro' not in cols:
+        c.execute('ALTER TABLE pacientes ADD COLUMN data_cadastro TEXT')
+    if 'idade' not in cols:
+        c.execute('ALTER TABLE pacientes ADD COLUMN idade INTEGER')
         
     c.execute('CREATE TABLE IF NOT EXISTS financeiro (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, valor REAL)')
     conn.commit()
 
 init_db()
 
-# --- ESTILO PARA VISIBILIDADE ---
+# --- ESTILIZAÇÃO E NAVEGAÇÃO ---
 st.markdown("""
     <style>
     .main { background-color: #0e1117; }
@@ -47,13 +49,11 @@ st.markdown("""
         border-radius: 12px; padding: 20px;
     }
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #FFFFFF !important; }
-    .stTextArea textarea { height: 200px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- MENU LATERAL (RESOLVE AS ABAS QUE NÃO SE CONVERSAM) ---
 st.sidebar.title("🍎 NutriSync Pro")
-menu = st.sidebar.radio("Navegação:", ["📊 Dashboard", "📝 Anamnese", "🤖 IA Prescritora", "💰 Financeiro"])
+menu = st.sidebar.radio("Navegação:", ["📊 Dashboard", "📝 Prontuário", "🤖 Prescrição IA", "💰 Financeiro"])
 conn = get_connection()
 
 # --- LÓGICA DAS SEÇÕES ---
@@ -70,50 +70,41 @@ if menu == "📊 Dashboard":
     
     st.divider()
     if not df_p.empty:
-        # Exibindo apenas colunas que garantidamente existem
-        st.dataframe(df_p[['nome', 'objetivo', 'data_cadastro']], use_container_width=True)
+        # Exibe apenas as colunas que agora garantidamente existem
+        st.dataframe(df_p[['nome', 'idade', 'objetivo', 'data_cadastro']], use_container_width=True)
     else:
         st.info("Nenhum paciente cadastrado.")
 
-elif menu == "📝 Anamnese":
-    st.title("Prontuário do Paciente")
-    with st.form("form_cad", clear_on_submit=True):
+elif menu == "📝 Prontuário":
+    st.title("Anamnese e Exames")
+    with st.form("form_paciente", clear_on_submit=True):
         nome = st.text_input("Nome Completo")
         idade = st.number_input("Idade", 0, 120)
         obj = st.selectbox("Objetivo", ["Emagrecimento", "Hipertrofia", "Saúde"])
-        clinico = st.text_area("Histórico Clínico (Alergias, Doenças)")
-        exames = st.text_area("Exames Laboratoriais")
+        clinico = st.text_area("Histórico Clínico")
+        exames = st.text_area("Resultados de Exames")
         if st.form_submit_button("Salvar Registro"):
             if nome:
                 dt = datetime.now().strftime("%d/%m/%Y")
                 conn.execute("INSERT INTO pacientes (nome, idade, objetivo, clinico, exames, data_cadastro) VALUES (?,?,?,?,?,?)",
                              (nome, idade, obj, clinico, exames, dt))
                 conn.commit()
-                st.success(f"Paciente {nome} salvo!")
+                st.success("Paciente cadastrado com sucesso!")
             else: st.error("O nome é obrigatório.")
 
-elif menu == "🤖 IA Prescritora":
-    st.title("Assistente de Dieta (IA)")
+elif menu == "🤖 Prescrição IA":
+    st.title("Assistente de IA")
     df_p = pd.read_sql_query("SELECT * FROM pacientes", conn)
     if df_p.empty:
         st.warning("Cadastre um paciente primeiro.")
     else:
-        paciente_sel = st.selectbox("Selecione o Paciente", df_p['nome'])
-        dados = df_p[df_p['nome'] == paciente_sel].iloc[0]
-        
-        if st.button("🪄 Gerar Dieta com IA"):
-            prompt = f"Crie uma dieta para {dados['nome']}, objetivo {dados['objetivo']}, histórico: {dados['clinico']}."
+        sel = st.selectbox("Selecione o Paciente", df_p['nome'])
+        p = df_p[df_p['nome'] == sel].iloc[0]
+        if st.button("🪄 Gerar Dieta"):
+            prompt = f"Crie uma dieta para {p['nome']}, objetivo {p['objetivo']}, clínico: {p['clinico']}."
             with st.spinner("IA processando..."):
-                try:
-                    # Geração de texto pela IA
-                    response = model.generate_content(prompt)
-                    st.session_state['dieta'] = response.text
-                except Exception as e:
-                    st.error(f"Erro na IA: {e}")
-        
-        if 'dieta' in st.session_state:
-            plano = st.text_area("Plano Sugerido:", value=st.session_state['dieta'])
-            st.download_button("Baixar Plano (TXT)", plano, file_name=f"dieta_{dados['nome']}.txt")
+                response = model.generate_content(prompt)
+                st.write(response.text)
 
 elif menu == "💰 Financeiro":
     st.title("Financeiro")
