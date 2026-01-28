@@ -5,7 +5,7 @@ import google.generativeai as genai
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA IA ---
-API_KEY = "AIzaSyCBcNud4YjHkv0wLWZneZ1wQ3eBoV7qoJg" 
+API_KEY = "AIzaSyAO9CysPJuLdaM9Br-lVByTq-6dlgyJXdQ" 
 genai.configure(api_key=API_KEY)
 
 # --- INICIALIZAÇÃO DO ESTADO DE NAVEGAÇÃO ---
