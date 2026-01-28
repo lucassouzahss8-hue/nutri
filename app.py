@@ -6,7 +6,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÃO DA IA ---
 # Insira sua chave real obtida no Google AI Studio
-API_KEY = "SUA_CHAVE_AQUI" 
+API_KEY = "AIzaSyAO9CysPJuLdaM9Br-lVByTq-6dlgyJXdQ" 
 genai.configure(api_key=API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash') 
 
