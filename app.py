@@ -6,26 +6,37 @@ from datetime import datetime
 # --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="NutriSync Pro", layout="wide", page_icon="🍎")
 
-# --- CONEXÃO COM BANCO DE DADOS ---
-conn = sqlite3.connect('nutri_data.db', check_same_thread=False)
+# --- CONEXÃO E CRIAÇÃO DO BANCO DE DADOS ---
+def init_db():
+    conn = sqlite3.connect('nutri_data.db', check_same_thread=False)
+    c = conn.cursor()
+    # Tabela de Pacientes
+    c.execute('''CREATE TABLE IF NOT EXISTS pacientes 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, idade INTEGER, objetivo TEXT, historico TEXT)''')
+    # Tabela de Agenda
+    c.execute('''CREATE TABLE IF NOT EXISTS agenda 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, horario TEXT, paciente TEXT, status TEXT)''')
+    # Tabela Financeira
+    c.execute('''CREATE TABLE IF NOT EXISTS financeiro 
+                 (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT, valor REAL, metodo TEXT)''')
+    conn.commit()
+    return conn
+
+conn = init_db()
 c = conn.cursor()
 
-# Criar tabelas básicas se não existirem
-c.execute('''CREATE TABLE IF NOT EXISTS pacientes 
-             (id INTEGER PRIMARY KEY, nome TEXT, idade INTEGER, objetivo TEXT)''')
-conn.commit()
-
-# --- ESTILIZAÇÃO CSS ---
+# --- ESTILIZAÇÃO ---
 st.markdown("""
     <style>
-    .main { background-color: #f5f7f9; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #2e7d32; color: white; }
+    .stButton>button { width: 100%; border-radius: 5px; background-color: #2e7d32; color: white; }
+    .stMetric { background-color: #ffffff; padding: 15px; border-radius: 10px; border: 1px solid #e0e0e0; }
     </style>
     """, unsafe_allow_html=True)
 
 # --- NAVEGAÇÃO LATERAL ---
-st.sidebar.title("🍎 NutriSync v1.0")
-menu = st.sidebar.radio("Navegação", [
+st.sidebar.title("🍎 NutriSync Pro")
+st.sidebar.markdown("---")
+menu = st.sidebar.radio("Ir para:", [
     "Dashboard", 
     "Prontuário (Anamnese)", 
     "Antropometria", 
@@ -34,91 +45,117 @@ menu = st.sidebar.radio("Navegação", [
     "Financeiro"
 ])
 
-# --- LÓGICA DAS PÁGINAS ---
-
+# --- 1. DASHBOARD ---
 if menu == "Dashboard":
     st.title("📊 Painel Geral")
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Pacientes Ativos", "12")
-    col2.metric("Consultas Hoje", "4")
-    col3.metric("Receita Mensal", "R$ 4.500", "+15%")
     
-    st.subheader("Agenda do Dia")
-    agenda = pd.DataFrame({
-        "Horário": ["09:00", "10:30", "14:00"],
-        "Paciente": ["João Silva", "Maria Oliveira", "Carlos Souza"],
-        "Status": ["Confirmado", "Em espera", "Online"]
-    })
-    st.table(agenda)
+    # Busca dados para os cards
+    qtd_pacientes = pd.read_sql_query("SELECT COUNT(*) as total FROM pacientes", conn).iloc[0]['total']
+    receita_total = pd.read_sql_query("SELECT SUM(valor) as total FROM financeiro", conn).iloc[0]['total'] or 0.0
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Pacientes Ativos", qtd_pacientes)
+    col2.metric("Consultas Hoje", "0") # Pode ser automatizado com filtro de data
+    col3.metric("Receita Total", f"R$ {receita_total:,.2f}")
+    
+    st.divider()
+    
+    st.subheader("📅 Agenda do Dia")
+    agenda_df = pd.read_sql_query("SELECT horario as 'Horário', paciente as 'Paciente', status as 'Status' FROM agenda", conn)
+    
+    if agenda_df.empty:
+        st.info("Sua agenda para hoje está vazia.")
+    else:
+        st.table(agenda_df)
 
+    # Formulário rápido para adicionar à agenda
+    with st.expander("➕ Novo Agendamento"):
+        with st.form("add_agenda"):
+            h = st.text_input("Horário (ex: 14:00)")
+            p = st.text_input("Nome do Paciente")
+            s = st.selectbox("Status", ["Confirmado", "Pendente", "Online"])
+            if st.form_submit_button("Agendar"):
+                c.execute("INSERT INTO agenda (horario, paciente, status) VALUES (?,?,?)", (h, p, s))
+                conn.commit()
+                st.success("Agendado!")
+                st.rerun()
+
+# --- 2. PRONTUÁRIO ---
 elif menu == "Prontuário (Anamnese)":
     st.title("📝 Cadastro e Anamnese")
-    with st.form("form_paciente"):
-        nome = st.text_input("Nome Completo")
-        data_nasc = st.date_input("Data de Nascimento")
-        objetivo = st.selectbox("Objetivo Principal", ["Emagrecimento", "Hipertrofia", "Performance", "Saúde"])
-        historico = st.text_area("Histórico Clínico (Doenças, Alergias, Medicamentos)")
-        if st.form_submit_button("Salvar Prontuário"):
-            c.execute("INSERT INTO pacientes (nome, idade, objetivo) VALUES (?,?,?)", (nome, 25, objetivo))
-            conn.commit()
-            st.success("Paciente cadastrado com sucesso!")
+    
+    tab1, tab2 = st.tabs(["Novo Cadastro", "Ver Pacientes"])
+    
+    with tab1:
+        with st.form("form_paciente"):
+            nome = st.text_input("Nome Completo")
+            idade = st.number_input("Idade", min_value=0, max_value=120)
+            objetivo = st.selectbox("Objetivo", ["Emagrecimento", "Hipertrofia", "Saúde", "Performance"])
+            historico = st.text_area("Histórico Clínico")
+            if st.form_submit_button("Salvar Paciente"):
+                c.execute("INSERT INTO pacientes (nome, idade, objetivo, historico) VALUES (?,?,?,?)", (nome, idade, objetivo, historico))
+                conn.commit()
+                st.success("Paciente salvo!")
 
+    with tab2:
+        pacientes_df = pd.read_sql_query("SELECT nome, idade, objetivo FROM pacientes", conn)
+        st.dataframe(pacientes_df, use_container_width=True)
+
+# --- 3. ANTROPOMETRIA ---
 elif menu == "Antropometria":
-    st.title("⚖️ Composição Corporal")
-    col1, col2 = st.columns(2)
-    with col1:
-        peso = st.number_input("Peso (kg)", value=70.0)
-        altura = st.number_input("Altura (cm)", value=170)
-    with col2:
-        pescoço = st.number_input("Circunferência Pescoço (cm)", value=35.0)
-        cintura = st.number_input("Circunferência Cintura (cm)", value=80.0)
-    
-    # Cálculo Simples de IMC
-    imc = peso / ((altura/100)**2)
-    st.metric("IMC Atual", f"{imc:.2f}")
-    
-    if imc < 18.5: st.warning("Abaixo do peso")
-    elif imc < 25: st.success("Peso normal")
-    else: st.error("Sobrepeso/Obesidade")
+    st.title("⚖️ Avaliação Antropométrica")
+    with st.container():
+        col1, col2 = st.columns(2)
+        peso = col1.number_input("Peso (kg)", value=70.0)
+        altura = col2.number_input("Altura (cm)", value=170)
+        
+        imc = peso / ((altura/100)**2)
+        st.subheader(f"IMC: {imc:.2f}")
+        
+        if imc < 18.5: st.warning("Abaixo do peso")
+        elif imc < 25: st.success("Peso ideal")
+        else: st.error("Sobrepeso")
 
+# --- 4. PLANO ALIMENTAR ---
 elif menu == "Plano Alimentar":
-    st.title("🍽️ Prescrição Dietética")
-    paciente_sel = st.selectbox("Selecionar Paciente", ["João Silva", "Maria Oliveira"])
+    st.title("🍽️ Prescrição de Dieta")
+    paciente_lista = pd.read_sql_query("SELECT nome FROM pacientes", conn)
+    sel_paciente = st.selectbox("Selecione o Paciente", paciente_lista)
     
-    st.subheader("Distribuição de Macronutrientes")
-    carb = st.slider("Carboidratos (%)", 0, 100, 40)
-    prot = st.slider("Proteínas (%)", 0, 100, 30)
-    fat = st.slider("Gorduras (%)", 0, 100, 30)
-    
-    if carb + prot + fat != 100:
-        st.error("A soma dos macros deve ser 100%!")
-    
-    st.text_area("Refeição 1 - Café da Manhã", "Ex: 2 ovos mexidos + 1 fatia de pão integral")
-    st.button("Gerar PDF do Plano")
+    st.text_area("Café da Manhã")
+    st.text_area("Almoço")
+    st.text_area("Jantar")
+    st.button("💾 Salvar Plano Alimentar")
 
+# --- 5. SUPLEMENTAÇÃO ---
 elif menu == "Suplementação":
     st.title("💊 Prescrição de Suplementos")
-    suplemento = st.text_input("Nome do Suplemento/Fórmula")
-    dosagem = st.text_input("Dosagem (ex: 5g, 500mg)")
-    horario = st.text_input("Posologia (ex: Pré-treino, Após almoço)")
-    if st.button("Adicionar à Receita"):
-        st.write(f"✅ Adicionado: {suplemento} - {dosagem} ({horario})")
+    with st.form("suple"):
+        nome_s = st.text_input("Suplemento")
+        dose = st.text_input("Dose (ex: 5g)")
+        if st.form_submit_button("Adicionar"):
+            st.write(f"Adicionado: {nome_s} - {dose}")
 
+# --- 6. FINANCEIRO ---
 elif menu == "Financeiro":
     st.title("💰 Gestão Financeira")
+    
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Entradas")
-        st.date_input("Data do Recebimento")
-        valor = st.number_input("Valor da Consulta (R$)", value=250.0)
-        metodo = st.selectbox("Forma de Pagamento", ["Pix", "Cartão", "Dinheiro"])
-        if st.button("Registrar Pagamento"):
-            st.success("Lançamento efetuado!")
-    with col2:
-        st.subheader("Resumo Mensal")
-        st.info("Total Recebido: R$ 4.500,00")
-        st.error("Despesas Fixas: R$ 1.200,00")
+        with st.form("financeiro_form"):
+            valor = st.number_input("Valor Recebido (R$)", min_value=0.0)
+            metodo = st.selectbox("Método", ["Pix", "Cartão", "Dinheiro"])
+            data = datetime.now().strftime("%d/%m/%Y")
+            if st.form_submit_button("Registrar Entrada"):
+                c.execute("INSERT INTO financeiro (data, valor, metodo) VALUES (?,?,?)", (data, valor, metodo))
+                conn.commit()
+                st.success("Lançamento realizado!")
+                st.rerun()
 
-# --- RODAPÉ ---
+    with col2:
+        df_fin = pd.read_sql_query("SELECT data, valor, metodo FROM financeiro", conn)
+        st.dataframe(df_fin)
+
+# Rodapé lateral
 st.sidebar.markdown("---")
-st.sidebar.caption("Desenvolvido para Nutricionistas v1.0")
+st.sidebar.info(f"Logado como: Nutricionista")
