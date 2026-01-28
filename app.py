@@ -1,28 +1,34 @@
 import streamlit as st
 import google.generativeai as genai
 
-# 1. Configuração da IA (COLE SUA CHAVE AQUI)
+# Configuração da API
 API_KEY = "AIzaSyCBcNud4YjHkv0wLWZneZ1wQ3eBoV7qoJg"
 genai.configure(api_key=API_KEY)
 
-st.title("🧪 Teste de Conexão IA")
+st.title("🍎 NutriSync - Conexão Estabilizada")
 
-# 2. Diagnóstico de Versão
-st.write(f"Versão da biblioteca: {genai.__version__}")
+pergunta = st.text_input("Diga algo para a IA:", "Olá!")
 
-# 3. Campo de Teste
-pergunta = st.text_input("Diga 'Olá' para a IA:", "Olá, você está funcionando?")
-
-if st.button("Executar Teste"):
-    try:
-        # Chamada direta ao modelo estável
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        response = model.generate_content(pergunta)
-        
-        st.success("✅ A IA RESPONDEU!")
-        st.write(response.text)
-        
-    except Exception as e:
-        st.error("❌ O erro persiste.")
-        st.code(str(e))
-        st.info("Se o erro for 404, sua biblioteca está desatualizada no servidor.")
+if st.button("Executar"):
+    # Tentativa 1: Gemini 1.5 Flash
+    # Tentativa 2: Gemini 1.0 Pro (Caso a primeira falhe com erro 404)
+    modelos_para_testar = ['gemini-1.5-flash', 'gemini-pro']
+    
+    sucesso = False
+    for nome_modelo in modelos_para_testar:
+        try:
+            model = genai.GenerativeModel(nome_modelo)
+            response = model.generate_content(pergunta)
+            st.success(f"✅ Conectado com sucesso via: {nome_modelo}")
+            st.write(response.text)
+            sucesso = True
+            break # Para se funcionar
+        except Exception as e:
+            if "404" in str(e):
+                st.warning(f"Tentando alternativa... ({nome_modelo} não disponível)")
+            else:
+                st.error(f"Erro técnico: {e}")
+                break
+    
+    if not sucesso:
+        st.error("Não foi possível conectar a nenhum modelo da IA. Verifique sua chave API.")
