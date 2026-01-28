@@ -5,18 +5,18 @@ import google.generativeai as genai
 from datetime import datetime
 
 # --- CONFIGURAÇÃO DA IA ---
-# Certifique-se de colocar sua chave aqui
 API_KEY = "AIzaSyAO9CysPJuLdaM9Br-lVByTq-6dlgyJXdQ" 
 genai.configure(api_key=API_KEY)
-# Utilizando o modelo Gemini 1.5 Flash para máxima eficiência
+
+# Chamada robusta para o modelo Gemini 1.5 Flash
 model = genai.GenerativeModel('gemini-1.5-flash') 
 
-# --- FUNÇÃO DE BANCO DE DATA (REBOOT AUTOMÁTICO) ---
-def conectar_banco():
-    conn = sqlite3.connect('nutri_sync_v2.db', check_same_thread=False)
+# --- BANCO DE DADOS DINÂMICO ---
+def init_db():
+    # Usando um novo nome de arquivo para garantir um banco limpo
+    conn = sqlite3.connect('nutri_v5_final.db', check_same_thread=False)
     c = conn.cursor()
-    # Criamos uma tabela nova com nome diferente para evitar conflitos antigos
-    c.execute('''CREATE TABLE IF NOT EXISTS pacientes_v2 
+    c.execute('''CREATE TABLE IF NOT EXISTS pacientes 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                   nome TEXT, 
                   objetivo TEXT, 
@@ -25,61 +25,69 @@ def conectar_banco():
     conn.commit()
     return conn
 
-conn = conectar_banco()
+conn = init_db()
 
 # --- INTERFACE ---
 st.set_page_config(page_title="NutriSync Pro", layout="wide")
 
-# CSS para forçar a cor branca nos textos e resolver o erro de visão
-st.markdown("""
-    <style>
-    [data-testid="stMetricValue"] { color: white !important; }
-    .stDataFrame { background-color: #1e1e1e; }
-    </style>
-    """, unsafe_allow_html=True)
+st.sidebar.title("🍎 NutriSync")
+menu = st.sidebar.radio("Navegação", ["Dashboard", "Cadastrar Paciente", "IA Prescritora"])
 
-aba = st.sidebar.radio("Navegação", ["Início", "Novo Paciente", "IA Nutri"])
+# --- DASHBOARD ---
+if menu == "Dashboard":
+    st.title("📊 Pacientes Cadastrados")
+    df = pd.read_sql_query("SELECT * FROM pacientes", conn)
+    
+    if not df.empty:
+        # Seleção segura de colunas para evitar KeyError
+        colunas_exibir = [c for c in ['nome', 'objetivo', 'data_cadastro'] if c in df.columns]
+        st.dataframe(df[colunas_exibir], use_container_width=True)
+    else:
+        st.info("Nenhum paciente encontrado. Vá em 'Cadastrar Paciente'.")
 
-if aba == "Início":
-    st.title("📊 Painel de Pacientes")
-    # Lógica de leitura segura
-    try:
-        df = pd.read_sql_query("SELECT * FROM pacientes_v2", conn)
-        if not df.empty:
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("Nenhum paciente cadastrado ainda.")
-    except Exception as e:
-        st.error(f"Erro ao ler dados: {e}")
+# --- CADASTRO ---
+elif menu == "Cadastrar Paciente":
+    st.title("📝 Novo Prontuário")
+    with st.form("form_cad", clear_on_submit=True):
+        nome = st.text_input("Nome do Paciente")
+        obj = st.selectbox("Objetivo", ["Emagrecimento", "Hipertrofia", "Performance", "Saúde"])
+        clin = st.text_area("Histórico Clínico e Restrições")
+        
+        if st.form_submit_button("Salvar no Banco"):
+            if nome:
+                data_atual = datetime.now().strftime("%d/%m/%Y")
+                conn.execute("INSERT INTO pacientes (nome, objetivo, clinico, data_cadastro) VALUES (?,?,?,?)",
+                             (nome, obj, clin, data_atual))
+                conn.commit()
+                st.success(f"Paciente {nome} cadastrado com sucesso!")
+            else:
+                st.error("Por favor, insira o nome.")
 
-elif aba == "Novo Paciente":
-    st.title("📝 Cadastro")
-    with st.form("meu_form"):
-        nome = st.text_input("Nome")
-        obj = st.selectbox("Objetivo", ["Emagrecimento", "Ganho de Massa"])
-        hist = st.text_area("Histórico Clínico")
-        if st.form_submit_button("Salvar"):
-            data_hoje = datetime.now().strftime("%d/%m/%Y")
-            conn.execute("INSERT INTO pacientes_v2 (nome, objetivo, clinico, data_cadastro) VALUES (?,?,?,?)",
-                         (nome, obj, hist, data_hoje))
-            conn.commit()
-            st.success("Paciente cadastrado!")
-
-elif aba == "IA Nutri":
-    st.title("🤖 Prescrição Inteligente")
-    try:
-        df = pd.read_sql_query("SELECT * FROM pacientes_v2", conn)
-        if df.empty:
-            st.warning("Cadastre alguém primeiro.")
-        else:
-            p_escolhido = st.selectbox("Selecione o Paciente", df['nome'])
-            dados_p = df[df['nome'] == p_escolhido].iloc[0]
-            
-            if st.button("🪄 Gerar Dieta com Gemini"):
-                with st.spinner("Analisando perfil..."):
-                    # Prompt para geração de conteúdo
-                    prompt = f"Gere uma dieta para {p_escolhido}, objetivo: {dados_p['objetivo']}, clínico: {dados_p['clinico']}."
-                    res = model.generate_content(prompt)
-                    st.markdown(res.text)
-    except Exception as e:
-        st.error(f"Erro na IA: {e}")
+# --- IA PRESCRITORA ---
+elif menu == "IA Prescritora":
+    st.title("🤖 Assistente de Prescrição")
+    df = pd.read_sql_query("SELECT * FROM pacientes", conn)
+    
+    if df.empty:
+        st.warning("Cadastre um paciente primeiro.")
+    else:
+        paciente_sel = st.selectbox("Selecione o Paciente", df['nome'])
+        dados = df[df['nome'] == paciente_sel].iloc[0]
+        
+        if st.button("✨ Gerar Dieta com Gemini"):
+            with st.spinner("IA analisando dados..."):
+                # Prompt estruturado para o Gemini 1.5 Flash
+                prompt = f"""Como nutricionista profissional, elabore um plano alimentar para:
+                Paciente: {dados['nome']}
+                Objetivo: {dados['objetivo']}
+                Restrições: {dados.get('clinico', 'Nenhuma')}
+                
+                Estruture por refeições e seja específico."""
+                
+                try:
+                    response = model.generate_content(prompt)
+                    st.markdown("### Sugestão de Plano Alimentar")
+                    st.write(response.text)
+                except Exception as e:
+                    st.error(f"Erro na conexão com a IA: {e}")
+                    st.info("Verifique se sua API KEY está correta.")
